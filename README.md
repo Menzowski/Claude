@@ -48,14 +48,17 @@ python3 -m http.server 8000
 
 ## Deploy (GitHub Pages)
 
-A workflow at `.github/workflows/deploy.yml` publishes the site automatically.
-One-time setup in your repo:
+The whole app is static files at the repo root, so GitHub Pages can serve them
+directly — no build step, no workflow. One-time setup:
 
-1. **Settings → Pages → Build and deployment → Source: GitHub Actions**.
-2. Push to the `main` or `claude/adoring-dijkstra-yro1yu` branch.
-3. The **Deploy to GitHub Pages** Action runs and gives you a live URL
-   (under the workflow run / Pages settings). Open it on your phone and
-   "Add to Home Screen".
+1. Make the repo **public** (free Pages), or use a paid plan to keep it private.
+2. **Settings → Pages → Build and deployment → Source: Deploy from a branch**.
+3. Pick the branch (e.g. `main`) and folder **`/ (root)`**, then **Save**.
+4. Wait ~1–3 min for the first build, then open the URL shown in the green
+   "Your site is live at…" banner (e.g. `https://<user>.github.io/<repo>/`).
+   On your phone, tap **Share → Add to Home Screen**.
+
+(The empty `.nojekyll` file tells Pages to serve the files as-is.)
 
 ## Project layout
 
