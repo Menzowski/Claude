@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#6c5ce7" />
+  <meta name="description" content="Guess It! — a two-player pass-and-play guessing game. Set a secret number, animal, word or anything, then ask questions to guess it." />
+  <title>Guess It! — Two-player guessing game</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="assets/icon-192.png" />
+  <link rel="apple-touch-icon" href="assets/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- ============ SETUP SCREEN ============ -->
+    <section class="screen" id="screen-setup" data-screen="setup">
+      <header class="hero">
+        <h1 class="logo">🎯 Guess&nbsp;It!</h1>
+        <p class="tagline">Set a secret. Ask questions. Guess it.</p>
+      </header>
+
+      <div class="card">
+        <h2>Players</h2>
+        <label class="field">
+          <span>Player 1</span>
+          <input type="text" id="player1" maxlength="20" placeholder="e.g. Menso" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Player 2</span>
+          <input type="text" id="player2" maxlength="20" placeholder="e.g. Partner" autocomplete="off" />
+        </label>
+      </div>
+
+      <div class="card scoreboard" id="scoreboard">
+        <h2>Scoreboard</h2>
+        <div class="score-row">
+          <span class="score-name" id="score-name-1">Player 1</span>
+          <span class="score-val" id="score-val-1">0</span>
+        </div>
+        <div class="score-row">
+          <span class="score-name" id="score-name-2">Player 2</span>
+          <span class="score-val" id="score-val-2">0</span>
+        </div>
+        <button class="btn-text" id="reset-scores">Reset scores</button>
+      </div>
+
+      <div class="card">
+        <h2>Who hides the secret first?</h2>
+        <div class="chooser" id="setter-chooser">
+          <button class="choice" data-setter="0" id="chooser-0">Player 1</button>
+          <button class="choice" data-setter="1" id="chooser-1">Player 2</button>
+        </div>
+      </div>
+
+      <button class="btn btn-primary btn-big" id="start-round">Start round →</button>
+    </section>
+
+    <!-- ============ SETTER SCREEN ============ -->
+    <section class="screen hidden" id="screen-setter" data-screen="setter">
+      <header class="bar">
+        <button class="btn-text" id="setter-back">← Back</button>
+        <span class="bar-title"><strong id="setter-name">Setter</strong>, set your secret</span>
+      </header>
+
+      <div class="card">
+        <h2>Pick a category</h2>
+        <div class="category-grid" id="category-grid"><!-- filled by JS --></div>
+      </div>
+
+      <div class="card" id="setter-input-card">
+        <!-- Custom category label (only for custom) -->
+        <label class="field hidden" id="custom-label-field">
+          <span>Category name</span>
+          <input type="text" id="custom-label" maxlength="30" placeholder="e.g. Movie, Food, Country" autocomplete="off" />
+        </label>
+
+        <!-- Number range (only for number category) -->
+        <div class="range-fields hidden" id="range-fields">
+          <label class="field">
+            <span>Min</span>
+            <input type="number" id="range-min" value="0" />
+          </label>
+          <label class="field">
+            <span>Max</span>
+            <input type="number" id="range-max" value="100" />
+          </label>
+        </div>
+
+        <label class="field">
+          <span id="secret-label">Secret answer</span>
+          <input type="text" id="secret-input" maxlength="60" placeholder="Type the secret…" autocomplete="off" />
+        </label>
+
+        <p class="hint-list" id="prompt-hints"><!-- preset ideas --></p>
+      </div>
+
+      <button class="btn btn-primary btn-big" id="hide-and-pass">Hide &amp; pass device →</button>
+    </section>
+
+    <!-- ============ HANDOFF SCREEN ============ -->
+    <section class="screen hidden" id="screen-handoff" data-screen="handoff">
+      <div class="handoff-center">
+        <div class="handoff-emoji">🤝</div>
+        <h2 id="handoff-text">Pass the device to the Guesser</h2>
+        <p class="muted">Don't peek! The secret is hidden.</p>
+        <button class="btn btn-primary btn-big" id="im-ready">I'm the Guesser — start asking</button>
+      </div>
+    </section>
+
+    <!-- ============ GUESSER SCREEN ============ -->
+    <section class="screen hidden" id="screen-guesser" data-screen="guesser">
+      <header class="bar">
+        <span class="bar-title"><strong id="guesser-name">Guesser</strong> · <span id="guesser-category">Category</span></span>
+        <span class="timer" id="timer">0:00</span>
+      </header>
+
+      <div class="card counter-card">
+        <div class="counter-display">
+          <span class="counter-num" id="question-count">0</span>
+          <span class="counter-lbl">questions asked</span>
+        </div>
+        <button class="btn btn-secondary" id="add-question">+ I asked a question</button>
+      </div>
+
+      <div class="card">
+        <h2>Setter taps the answer</h2>
+        <div class="answer-buttons">
+          <button class="ans ans-yes" data-answer="Yes">👍 Yes</button>
+          <button class="ans ans-no" data-answer="No">👎 No</button>
+          <button class="ans ans-sort" data-answer="Sort of">🤷 Sort of</button>
+          <button class="ans ans-pass" data-answer="Pass">⏭️ Pass</button>
+        </div>
+        <button class="btn-text hidden" id="hint-btn">💡 Give a hint</button>
+        <p class="hint-output" id="hint-output"></p>
+      </div>
+
+      <div class="card log-card">
+        <h2>Answer log</h2>
+        <ol class="answer-log" id="answer-log"><li class="muted">No answers yet.</li></ol>
+      </div>
+
+      <div class="card">
+        <label class="field">
+          <span>Make your guess</span>
+          <input type="text" id="guess-input" placeholder="Your guess…" autocomplete="off" />
+        </label>
+        <button class="btn btn-primary btn-big" id="submit-guess">Guess!</button>
+      </div>
+    </section>
+
+    <!-- ============ RESULT SCREEN ============ -->
+    <section class="screen hidden" id="screen-result" data-screen="result">
+      <div class="result-center">
+        <div class="result-emoji" id="result-emoji">🎉</div>
+        <h2 id="result-title">Correct!</h2>
+        <p class="result-detail">The secret was <strong id="result-answer">—</strong></p>
+        <div class="recap">
+          <div class="recap-item"><span class="recap-num" id="recap-questions">0</span><span>questions</span></div>
+          <div class="recap-item"><span class="recap-num" id="recap-time">0:00</span><span>time</span></div>
+        </div>
+        <div class="result-actions">
+          <button class="btn btn-primary btn-big" id="next-round">Swap roles &amp; play again</button>
+          <button class="btn-text" id="result-home">Back to home</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="js/categories.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
