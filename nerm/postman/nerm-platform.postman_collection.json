@@ -1,0 +1,377 @@
+{
+  "info": {
+    "name": "NERM Platform",
+    "description": "Non-Employee Risk Management — SCIM 2.0 and REST v1.\n\nSet the `baseUrl` and `token` collection variables before running. The token is issued once when an API client is created (see the seed output or the admin console).\n\nThe **Workflow round trip** folder is ordered: run it top to bottom to export a definition, edit it, validate, publish a new version, simulate it and activate it.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "token", "value": "nerm_replace_me" },
+    { "key": "workflowKey", "value": "contractor-onboarding" },
+    { "key": "userId", "value": "" },
+    { "key": "publishedVersion", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "SCIM 2.0",
+      "item": [
+        {
+          "name": "Discovery — ServiceProviderConfig",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/scim/v2/ServiceProviderConfig"
+          }
+        },
+        {
+          "name": "Discovery — Schemas",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/scim/v2/Schemas" }
+        },
+        {
+          "name": "Discovery — ResourceTypes",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/scim/v2/ResourceTypes" }
+        },
+        {
+          "name": "List users",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('is a ListResponse', () => pm.expect(body.schemas).to.include('urn:ietf:params:scim:api:messages:2.0:ListResponse'));",
+                  "if (body.Resources && body.Resources.length) {",
+                  "  pm.collectionVariables.set('userId', body.Resources[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/scim/v2/Users?startIndex=1&count=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "Users"],
+              "query": [
+                { "key": "startIndex", "value": "1" },
+                { "key": "count", "value": "10" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List users — filter by active",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/scim/v2/Users?filter=active eq true",
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "Users"],
+              "query": [{ "key": "filter", "value": "active eq true" }]
+            }
+          }
+        },
+        {
+          "name": "List users — incremental aggregation",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "The filter Identity Security Cloud sends for a delta aggregation.",
+            "url": {
+              "raw": "{{baseUrl}}/scim/v2/Users?filter=meta.lastModified gt \"2026-01-01T00:00:00Z\"",
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "Users"],
+              "query": [
+                {
+                  "key": "filter",
+                  "value": "meta.lastModified gt \"2026-01-01T00:00:00Z\""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List users — filter by risk tier (custom extension)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/scim/v2/Users?filter=urn:nerm:2.0:NonEmployee:riskTier eq \"HIGH\"",
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "Users"],
+              "query": [
+                {
+                  "key": "filter",
+                  "value": "urn:nerm:2.0:NonEmployee:riskTier eq \"HIGH\""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unknown filter attribute is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('400 rather than matching everything', () => pm.response.to.have.status(400));",
+                  "pm.test('scimType is invalidFilter', () => pm.expect(pm.response.json().scimType).to.eql('invalidFilter'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "A filter clause the server cannot honour must fail loudly. Silently ignoring it would return the entire population.",
+            "url": {
+              "raw": "{{baseUrl}}/scim/v2/Users?filter=nickname eq \"jo\"",
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "Users"],
+              "query": [{ "key": "filter", "value": "nickname eq \"jo\"" }]
+            }
+          }
+        },
+        {
+          "name": "Get user by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/scim/v2/Users/{{userId}}"
+          }
+        },
+        {
+          "name": "Create user",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/scim+json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:User\",\n    \"urn:nerm:2.0:NonEmployee\"\n  ],\n  \"userName\": \"new.contractor@vendor.example\",\n  \"name\": { \"givenName\": \"New\", \"familyName\": \"Contractor\" },\n  \"title\": \"Integration Engineer\",\n  \"urn:ietf:params:scim:schemas:extension:enterprise:2.0:User\": {\n    \"department\": \"Platform\"\n  },\n  \"urn:nerm:2.0:NonEmployee\": {\n    \"endDate\": \"2027-01-01T00:00:00Z\",\n    \"attributes\": { \"workLocation\": \"remote\" }\n  }\n}"
+            },
+            "url": "{{baseUrl}}/scim/v2/Users"
+          }
+        },
+        {
+          "name": "Patch user",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/scim+json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schemas\": [\"urn:ietf:params:scim:api:messages:2.0:PatchOp\"],\n  \"Operations\": [\n    { \"op\": \"replace\", \"path\": \"title\", \"value\": \"Principal Engineer\" }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/scim/v2/Users/{{userId}}"
+          }
+        },
+        {
+          "name": "Deactivate user (DELETE is a soft delete)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "description": "The record is retained and moved out of an active state. Hard-deleting it would destroy the evidence of who had access and when.",
+            "url": "{{baseUrl}}/scim/v2/Users/{{userId}}"
+          }
+        },
+        {
+          "name": "List groups (vendor companies)",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/scim/v2/Groups" }
+        }
+      ]
+    },
+    {
+      "name": "Workflow round trip",
+      "description": "Run these in order. Together they prove the admin UI and the API are two views of one artifact.",
+      "item": [
+        {
+          "name": "1. List workflows",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/v1/workflows" }
+        },
+        {
+          "name": "2. Export the active definition",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "The body returned here is exactly what PUT accepts — commit it to git, diff it, promote it between environments.",
+            "url": "{{baseUrl}}/api/v1/workflows/{{workflowKey}}/versions/1"
+          }
+        },
+        {
+          "name": "3. Validate an edited definition",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('valid', () => pm.expect(pm.response.json().valid).to.be.true);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"contractor-onboarding\",\n  \"name\": \"Contractor onboarding\",\n  \"description\": \"Adds a security review for critical-risk engagements.\",\n  \"trigger\": {\n    \"on\": \"person.created\",\n    \"when\": \"person.type == 'CONTRACTOR' or person.type == 'VENDOR'\"\n  },\n  \"stages\": [\n    {\n      \"id\": \"sponsor-approval\",\n      \"name\": \"Sponsor approval\",\n      \"type\": \"approval\",\n      \"assignee\": { \"kind\": \"sponsor\" },\n      \"sla\": \"P3D\",\n      \"onTimeout\": \"escalate\",\n      \"escalateTo\": { \"kind\": \"role\", \"role\": \"IAM_ADMIN\" },\n      \"onReject\": \"REJECTED\"\n    },\n    {\n      \"id\": \"security-review\",\n      \"name\": \"Security review\",\n      \"type\": \"approval\",\n      \"assignee\": { \"kind\": \"role\", \"role\": \"IAM_ADMIN\" },\n      \"when\": \"person.riskTier == 'CRITICAL'\",\n      \"onReject\": \"REJECTED\"\n    },\n    { \"id\": \"approve\", \"type\": \"transition\", \"to\": \"APPROVED\" },\n    { \"id\": \"activate\", \"type\": \"transition\", \"to\": \"ACTIVE\" }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/workflows/validate"
+          }
+        },
+        {
+          "name": "4. Publish a new version",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('publishedVersion', body.version);",
+                  "pm.test('published inactive — activation is a separate decision', () => pm.expect(body.active).to.be.false);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "description": "Published versions are immutable. PUT appends a version rather than overwriting, so in-flight instances are never disturbed.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Contractor onboarding\",\n  \"description\": \"Adds a security review for critical-risk engagements.\",\n  \"trigger\": {\n    \"on\": \"person.created\",\n    \"when\": \"person.type == 'CONTRACTOR' or person.type == 'VENDOR'\"\n  },\n  \"stages\": [\n    {\n      \"id\": \"sponsor-approval\",\n      \"name\": \"Sponsor approval\",\n      \"type\": \"approval\",\n      \"assignee\": { \"kind\": \"sponsor\" },\n      \"sla\": \"P3D\",\n      \"onTimeout\": \"escalate\",\n      \"escalateTo\": { \"kind\": \"role\", \"role\": \"IAM_ADMIN\" },\n      \"onReject\": \"REJECTED\"\n    },\n    {\n      \"id\": \"security-review\",\n      \"name\": \"Security review\",\n      \"type\": \"approval\",\n      \"assignee\": { \"kind\": \"role\", \"role\": \"IAM_ADMIN\" },\n      \"when\": \"person.riskTier == 'CRITICAL'\",\n      \"onReject\": \"REJECTED\"\n    },\n    { \"id\": \"approve\", \"type\": \"transition\", \"to\": \"APPROVED\" },\n    { \"id\": \"activate\", \"type\": \"transition\", \"to\": \"ACTIVE\" }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/workflows/{{workflowKey}}"
+          }
+        },
+        {
+          "name": "5. Simulate — critical risk takes the security review",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('security-review is on the path', () => pm.expect(body.path).to.include('security-review'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": {{publishedVersion}},\n  \"person\": {\n    \"type\": \"CONTRACTOR\",\n    \"riskTier\": \"CRITICAL\",\n    \"startDate\": \"2026-01-01\",\n    \"endDate\": \"2027-06-01\"\n  }\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/workflows/{{workflowKey}}/simulate"
+          }
+        },
+        {
+          "name": "6. Simulate — low risk skips it",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('security-review is skipped', () => pm.expect(body.path).to.not.include('security-review'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": {{publishedVersion}},\n  \"person\": {\n    \"type\": \"CONTRACTOR\",\n    \"riskTier\": \"LOW\",\n    \"startDate\": \"2026-01-01\",\n    \"endDate\": \"2026-04-01\"\n  }\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/workflows/{{workflowKey}}/simulate"
+          }
+        },
+        {
+          "name": "7. Activate the new version",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"version\": {{publishedVersion}} }"
+            },
+            "url": "{{baseUrl}}/api/v1/workflows/{{workflowKey}}/activate"
+          }
+        },
+        {
+          "name": "8. List all versions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/workflows/{{workflowKey}}"
+          }
+        },
+        {
+          "name": "Invalid definition reports JSON paths",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('422', () => pm.response.to.have.status(422));",
+                  "pm.test('errors carry a path', () => pm.expect(pm.response.json().errors[0]).to.have.property('path'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"broken\",\n  \"name\": \"Broken\",\n  \"trigger\": { \"on\": \"person.created\" },\n  \"stages\": [\n    {\n      \"id\": \"a\",\n      \"type\": \"approval\",\n      \"assignee\": { \"kind\": \"sponsor\" },\n      \"when\": \"person.riskTier ==\",\n      \"onTimeout\": \"escalate\"\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/workflows/validate"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Scheduled jobs",
+      "item": [
+        {
+          "name": "Expiry sweep",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "x-job-secret", "value": "{{jobSecret}}" }],
+            "description": "Moves people past their end date out of an active state. Authenticated with the shared job secret, not a bearer token.",
+            "url": "{{baseUrl}}/api/v1/jobs/expiry"
+          }
+        },
+        {
+          "name": "SLA sweep",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "x-job-secret", "value": "{{jobSecret}}" }],
+            "url": "{{baseUrl}}/api/v1/jobs/sla"
+          }
+        }
+      ]
+    }
+  ]
+}
