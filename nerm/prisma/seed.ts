@@ -624,10 +624,19 @@ async function main() {
     where: { organizationId: organization.id, name: 'Identity Security Cloud' },
   });
 
+  // On a hosted demo the seed runs inside a build log nobody reads, so a
+  // randomly generated token would be effectively lost. DEMO_API_TOKEN lets the
+  // deployer choose it up front and paste it straight into Postman. It is only
+  // honoured alongside DEMO_MODE, so a real deployment always gets a random one.
+  const fixedToken =
+    process.env.DEMO_MODE === 'true' && process.env.DEMO_API_TOKEN
+      ? process.env.DEMO_API_TOKEN
+      : null;
+
   let issuedToken: string | null = null;
+
   if (!existingClient) {
-    const secret = randomBytes(32).toString('base64url');
-    issuedToken = `nerm_${secret}`;
+    issuedToken = fixedToken ?? `nerm_${randomBytes(32).toString('base64url')}`;
     await prisma.apiClient.create({
       data: {
         organizationId: organization.id,
@@ -637,10 +646,26 @@ async function main() {
         scopes: ['scim:read', 'scim:write', 'api:workflows', 'api:people'],
       },
     });
+  } else if (fixedToken) {
+    // Re-running the seed with a configured demo token re-points the existing
+    // client at it, so redeploying does not silently invalidate the token the
+    // deployer already wrote down.
+    const tokenHash = createHash('sha256').update(fixedToken).digest('hex');
+    if (existingClient.tokenHash !== tokenHash) {
+      await prisma.apiClient.update({
+        where: { id: existingClient.id },
+        data: { tokenHash, tokenPrefix: fixedToken.slice(0, 11) },
+      });
+      issuedToken = fixedToken;
+    }
   }
 
   console.log('\nSeed complete.\n');
-  console.log('Internal users (sign in through Keycloak, password "password"):');
+  console.log(
+    process.env.DEMO_MODE === 'true'
+      ? 'Internal users (sign in with the DEMO_PASSWORD you configured):'
+      : 'Internal users (sign in through your IdP, Keycloak password "password"):',
+  );
   console.log('  admin.iam@example.com      IAM_ADMIN');
   console.log('  sam.sponsor@example.com    SPONSOR');
   console.log('  sofia.sponsor@example.com  SPONSOR');

@@ -3,11 +3,11 @@ import Credentials from 'next-auth/providers/credentials';
 import { verify } from '@node-rs/argon2';
 import { authenticator } from 'otplib';
 import { prisma } from '@/lib/db';
-import { env, ssoEnabled } from '@/lib/env';
+import { demoModeEnabled, env, ssoEnabled } from '@/lib/env';
 import { writeAudit } from '@/lib/audit';
 
 /**
- * Two sign-in paths, deliberately kept separate:
+ * Sign-in paths, deliberately kept separate:
  *
  *   Internal users  — corporate IdP over OIDC. Config-driven, so the same build
  *                     runs against Entra ID, Okta, Keycloak or ISC by changing
@@ -15,6 +15,9 @@ import { writeAudit } from '@/lib/audit';
  *   Vendor admins   — invited, with a local password and mandatory TOTP. We do
  *                     not federate every supplier's IdP in v1, and we do not
  *                     let external accounts in without a second factor.
+ *   Demo            — a shared password standing in for the IdP, so the product
+ *                     can be shown on hosting with no IdP attached. Registered
+ *                     only when DEMO_MODE is on; see below.
  *
  * Accounts are never created by signing in. An internal user must already exist
  * (provisioned by an administrator) before OIDC will admit them — otherwise
@@ -90,6 +93,70 @@ providers.push(
     },
   }),
 );
+
+/**
+ * Demo sign-in.
+ *
+ * Substitutes a shared password for the corporate IdP so that the sponsor
+ * console, workflow editor and audit log are reachable on a deployment with no
+ * IdP attached. It is registered only when demo mode is fully configured — an
+ * unset flag means this provider does not exist, rather than existing in a
+ * disabled state that a later refactor might switch back on.
+ *
+ * What it deliberately does NOT relax:
+ *
+ *   * The user must already be provisioned and active. This replaces the
+ *     identity provider, not the entitlement decision.
+ *   * It admits INTERNAL users only. External vendor accounts keep their
+ *     mandatory TOTP — there is no path here that skips a second factor for
+ *     an account that is supposed to have one.
+ *   * Authorization is untouched. A demo session resolves through the same
+ *     `currentActor` -> `personScope` chain as any other, so role scoping and
+ *     vendor isolation behave identically.
+ *
+ * The audit log records `method: 'demo'`, so sessions established this way are
+ * distinguishable after the fact.
+ */
+if (demoModeEnabled) {
+  providers.push(
+    Credentials({
+      id: 'demo',
+      name: 'Demo sign-in',
+      credentials: {
+        email: { label: 'Email', type: 'email' },
+        password: { label: 'Demo password', type: 'password' },
+      },
+      async authorize(raw) {
+        const email = String(raw?.email ?? '').trim().toLowerCase();
+        const password = String(raw?.password ?? '');
+
+        if (!email || !password) return null;
+        if (password !== env.DEMO_PASSWORD) return null;
+
+        const user = await prisma.user.findFirst({
+          where: { email, kind: 'INTERNAL', active: true },
+        });
+        if (!user) return null;
+
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { lastLoginAt: new Date() },
+        });
+
+        await writeAudit({
+          organizationId: user.organizationId,
+          action: 'auth.login',
+          actor: { kind: 'USER', id: user.id, label: user.email },
+          subjectType: 'User',
+          subjectId: user.id,
+          metadata: { method: 'demo' },
+        });
+
+        return { id: user.id, email: user.email, name: user.name };
+      },
+    }),
+  );
+}
 
 export const authConfig: NextAuthConfig = {
   providers,

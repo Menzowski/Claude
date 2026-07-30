@@ -29,7 +29,17 @@ below runs.
 
 ---
 
-## Running it
+## Just want to see it?
+
+**[DEPLOY.md](./DEPLOY.md)** puts this on a free public URL in about 15 minutes with no
+terminal and no code — two free accounts (Vercel and Neon) and some form filling. Written
+for a non-developer.
+
+That path turns on **demo mode**, which replaces single sign-on with one shared password so
+the internal roles are reachable on hosting that has no identity provider. It is off by
+default and must stay off for anything real — see [Demo mode](#demo-mode) below.
+
+## Running it locally
 
 Requires Node 22+, pnpm, and Postgres 15+ (16 recommended — the schema uses
 `NULLS NOT DISTINCT`).
@@ -210,6 +220,29 @@ passes. `sla` escalates or auto-approves overdue tasks. Run both daily; without 
 an end date is a decoration rather than a control.
 
 ---
+
+## Demo mode
+
+`DEMO_MODE=true` registers a third Auth.js provider that admits **provisioned internal
+users** against a single shared `DEMO_PASSWORD`, standing in for the corporate IdP. It
+exists so the product can be demonstrated on hosting with no identity provider attached.
+
+It is a deliberate weakening of authentication. What it does *not* relax:
+
+- The user must already exist and be active — it replaces the identity provider, not the
+  entitlement decision.
+- Internal accounts only. External vendor accounts keep mandatory TOTP; there is no path
+  here that skips a second factor for an account that has one.
+- Authorization is untouched. A demo session flows through the same
+  `currentActor` → `personScope` chain, so role scoping and vendor isolation behave
+  identically (verified: a demo sponsor is refused `/admin/*` and `/audit`).
+
+Guardrails: the provider is not registered at all unless the flag is set; the app refuses
+to boot if `DEMO_MODE=true` without a password of at least 12 characters; a
+non-dismissible banner appears on every page; and the audit log records
+`method: 'demo'` so those sessions stay distinguishable.
+
+**Remove `DEMO_MODE` and `DEMO_PASSWORD` before this holds any real personal data.**
 
 ## Security posture
 

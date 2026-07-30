@@ -2,8 +2,10 @@ import { redirect } from 'next/navigation';
 import { ShieldCheck } from 'lucide-react';
 import { currentActor } from '@/lib/auth/actor';
 import { signIn } from '@/lib/auth/config';
-import { env, ssoEnabled } from '@/lib/env';
+import { demoModeEnabled, env, ssoEnabled } from '@/lib/env';
 import { VendorSignInForm } from './vendor-form';
+import { DemoSignInForm } from './demo-form';
+import { DemoBanner } from '@/components/demo-banner';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,8 +28,9 @@ export default async function SignInPage({
   const message = error ? (ERRORS[error] ?? 'Sign-in failed. Please try again.') : null;
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4 py-12">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen">
+      <DemoBanner />
+      <div className="mx-auto w-full max-w-md px-4 py-12">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
             <ShieldCheck className="h-6 w-6" />
@@ -61,6 +64,20 @@ export default async function SignInPage({
                 Continue with {env.OIDC_PROVIDER_NAME}
               </button>
             </form>
+          ) : demoModeEnabled ? (
+            /*
+             * Demo mode stands in for the corporate IdP on a deployment that
+             * has none. Internal staff only — vendor accounts still go through
+             * the MFA path below.
+             */
+            <>
+              <h2 className="mb-1 text-sm font-semibold">Internal staff</h2>
+              <p className="mb-4 text-xs text-muted-foreground">
+                Normally your corporate single sign-on. On this demo deployment, use the
+                shared demo password.
+              </p>
+              <DemoSignInForm />
+            </>
           ) : (
             <p className="rounded-md bg-muted px-4 py-3 text-sm text-muted-foreground">
               Single sign-on is not configured. Set <code>OIDC_ISSUER</code>,{' '}

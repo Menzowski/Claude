@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { ShieldCheck } from 'lucide-react';
 import { ThemeToggle } from './theme-toggle';
 import { SignOutButton } from './sign-out-button';
+import { DemoBanner } from './demo-banner';
 import type { Actor } from '@/lib/authz/scope';
 import { isAdmin, isAuditor, isVendorOnly, hasRole } from '@/lib/authz/scope';
 import { cn, initials } from '@/lib/ui';
@@ -55,6 +56,7 @@ export function AppShell({
 
   return (
     <div className="min-h-screen">
+      <DemoBanner />
       <header
         className={cn(
           'sticky top-0 z-40 border-b border-border backdrop-blur',
