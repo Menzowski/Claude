@@ -1,0 +1,540 @@
+// Non-Employee Risk Management — data model.
+//
+// Design notes that matter when reading this file:
+//
+//  * Profile attributes are DATA, not columns. `ProfileType` +
+//    `AttributeDefinition` describe which fields exist for a kind of
+//    non-employee; `AttributeValue` stores them. The handful of attributes the
+//    platform itself reasons about (name, email, dates, lifecycle state) are
+//    denormalized onto `Person` so they can be indexed, filtered and exposed
+//    over SCIM without a join per attribute.
+//
+//  * Workflow definitions are versioned and immutable once published.
+//    `WorkflowInstance` pins the version it started on, so editing a definition
+//    never mutates work that is already in flight.
+//
+//  * `AuditEvent` is append-only. Nothing in the codebase updates or deletes it.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy
+// ---------------------------------------------------------------------------
+
+/// The tenant root. Single row in v1, but present so that multi-tenancy is a
+/// migration rather than a rewrite.
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  domain    String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  vendors      VendorCompany[]
+  people       Person[]
+  users        User[]
+  profileTypes ProfileType[]
+  workflows    WorkflowDefinition[]
+  apiClients   ApiClient[]
+  auditEvents  AuditEvent[]
+}
+
+// ---------------------------------------------------------------------------
+// Vendors
+// ---------------------------------------------------------------------------
+
+enum VendorStatus {
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+}
+
+/// An external supplier. Vendor admins are scoped to exactly one of these,
+/// which is what makes delegated administration meaningful.
+model VendorCompany {
+  id             String       @id @default(cuid())
+  organizationId String
+  name           String
+  externalId     String?
+  status         VendorStatus @default(ACTIVE)
+  contractStart  DateTime?
+  contractEnd    DateTime?
+  /// Internal employee accountable for this vendor relationship.
+  ownerUserId    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner        User?            @relation("VendorOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  people       Person[]
+  assignments  RoleAssignment[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, status])
+}
+
+// ---------------------------------------------------------------------------
+// Profile schema (data-driven attributes)
+// ---------------------------------------------------------------------------
+
+enum AttributeKind {
+  STRING
+  TEXT
+  NUMBER
+  BOOLEAN
+  DATE
+  SELECT
+  EMAIL
+  PHONE
+}
+
+/// How sensitive a value is. Drives masking in list views, exports and audit
+/// diffs for actors without the reveal permission.
+enum Sensitivity {
+  PUBLIC
+  INTERNAL
+  PII
+  SENSITIVE_PII
+}
+
+/// A kind of non-employee (Contractor, Vendor Staff, Volunteer, ...) together
+/// with the attribute schema that applies to it.
+model ProfileType {
+  id             String   @id @default(cuid())
+  organizationId String
+  key            String
+  name           String
+  description    String?
+  /// Which workflow definition to start when a profile of this type is created.
+  workflowKey    String?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  attributes   AttributeDefinition[]
+  people       Person[]
+
+  @@unique([organizationId, key])
+}
+
+model AttributeDefinition {
+  id             String        @id @default(cuid())
+  profileTypeId  String
+  key            String
+  label          String
+  kind           AttributeKind @default(STRING)
+  sensitivity    Sensitivity   @default(INTERNAL)
+  required       Boolean       @default(false)
+  /// Whether vendor admins may see and set this attribute.
+  vendorVisible  Boolean       @default(true)
+  vendorEditable Boolean       @default(false)
+  helpText       String?
+  /// Options for SELECT, as a JSON array of { value, label }.
+  options        Json?
+  /// Optional validation: { min, max, pattern, maxLength }.
+  validation     Json?
+  order          Int           @default(0)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  profileType ProfileType      @relation(fields: [profileTypeId], references: [id], onDelete: Cascade)
+  values      AttributeValue[]
+
+  @@unique([profileTypeId, key])
+  @@index([profileTypeId, order])
+}
+
+model AttributeValue {
+  id           String    @id @default(cuid())
+  personId     String
+  definitionId String
+  /// Exactly one of the typed columns is populated, per the definition's kind.
+  stringValue  String?
+  numberValue  Float?
+  boolValue    Boolean?
+  dateValue    DateTime?
+  updatedAt    DateTime  @updatedAt
+
+  person     Person              @relation(fields: [personId], references: [id], onDelete: Cascade)
+  definition AttributeDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+
+  @@unique([personId, definitionId])
+  @@index([definitionId, stringValue])
+}
+
+// ---------------------------------------------------------------------------
+// People
+// ---------------------------------------------------------------------------
+
+enum PersonType {
+  CONTRACTOR
+  VENDOR
+  VOLUNTEER
+  INTERN
+  SERVICE
+}
+
+/// Lifecycle states. Transitions are governed by src/lib/domain/lifecycle.ts —
+/// this enum is the vocabulary, that module is the grammar.
+enum LifecycleState {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  ACTIVE
+  EXPIRING
+  SUSPENDED
+  INACTIVE
+  REJECTED
+  ARCHIVED
+}
+
+enum RiskTier {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model Person {
+  id             String         @id @default(cuid())
+  organizationId String
+  profileTypeId  String
+  type           PersonType     @default(CONTRACTOR)
+  lifecycleState LifecycleState @default(DRAFT)
+  riskTier       RiskTier       @default(LOW)
+
+  // Denormalized core attributes — indexed, and the ones SCIM exposes.
+  firstName  String
+  lastName   String
+  email      String
+  jobTitle   String?
+  department String?
+  location   String?
+
+  startDate DateTime?
+  endDate   DateTime?
+
+  /// Stable identifier for downstream systems (ISC `externalId`).
+  externalId String @unique @default(cuid())
+
+  /// Internal employee accountable for this person.
+  sponsorUserId   String?
+  vendorCompanyId String?
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  /// Set when a person is archived; the row is retained for audit but excluded
+  /// from SCIM and normal listings.
+  archivedAt DateTime?
+
+  organization  Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  profileType   ProfileType           @relation(fields: [profileTypeId], references: [id])
+  sponsor       User?                 @relation("PersonSponsor", fields: [sponsorUserId], references: [id], onDelete: SetNull)
+  vendorCompany VendorCompany?        @relation(fields: [vendorCompanyId], references: [id], onDelete: SetNull)
+  attributes    AttributeValue[]
+  workflows     WorkflowInstance[]
+  attachments   Attachment[]
+  transitions   LifecycleTransition[]
+
+  @@unique([organizationId, email])
+  @@index([organizationId, lifecycleState])
+  @@index([organizationId, vendorCompanyId])
+  @@index([organizationId, sponsorUserId])
+  @@index([organizationId, endDate])
+  @@index([updatedAt])
+}
+
+/// One row per lifecycle change. Powers the timeline on the person detail page
+/// and gives auditors a first-class record independent of the generic audit log.
+model LifecycleTransition {
+  id        String         @id @default(cuid())
+  personId  String
+  from      LifecycleState
+  to        LifecycleState
+  reason    String?
+  actorId   String?
+  actorKind ActorKind      @default(USER)
+  createdAt DateTime       @default(now())
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@index([personId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Users, roles and scoping
+// ---------------------------------------------------------------------------
+
+enum UserKind {
+  /// Internal employee, authenticated through the corporate IdP.
+  INTERNAL
+  /// External vendor administrator, invited and authenticated locally with MFA.
+  EXTERNAL
+}
+
+model User {
+  id             String   @id @default(cuid())
+  organizationId String
+  email          String
+  name           String
+  kind           UserKind @default(INTERNAL)
+  active         Boolean  @default(true)
+
+  /// OIDC subject claim, for internal users.
+  oidcSubject String? @unique
+
+  /// Local credentials, for invited external users only.
+  passwordHash    String?
+  totpSecret      String?
+  totpConfirmedAt DateTime?
+  inviteToken     String?   @unique
+  inviteExpiresAt DateTime?
+
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  roleAssignments RoleAssignment[]
+  sponsoredPeople Person[]         @relation("PersonSponsor")
+  ownedVendors    VendorCompany[]  @relation("VendorOwner")
+  assignedTasks   WorkflowTask[]   @relation("TaskAssignee")
+  sessions        Session[]
+
+  @@unique([organizationId, email])
+  @@index([organizationId, kind])
+}
+
+/// Server-side session records, so a session can be revoked centrally rather
+/// than only expiring on the client.
+model Session {
+  id           String    @id @default(cuid())
+  userId       String
+  sessionToken String    @unique
+  expires      DateTime
+  createdAt    DateTime  @default(now())
+  revokedAt    DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+enum Role {
+  IAM_ADMIN
+  SPONSOR
+  VENDOR_ADMIN
+  AUDITOR
+}
+
+/// A role held within a scope. `VENDOR_ADMIN` must carry a vendorCompanyId;
+/// `IAM_ADMIN` and `AUDITOR` are organization-wide. Enforced in
+/// src/lib/authz/scope.ts.
+model RoleAssignment {
+  id              String   @id @default(cuid())
+  userId          String
+  role            Role
+  vendorCompanyId String?
+  createdAt       DateTime @default(now())
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vendorCompany VendorCompany? @relation(fields: [vendorCompanyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role, vendorCompanyId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Workflow
+// ---------------------------------------------------------------------------
+
+/// A published, immutable version of a workflow. Publishing writes a new row;
+/// nothing edits an existing one. `active` selects the version new instances
+/// start on.
+model WorkflowDefinition {
+  id             String   @id @default(cuid())
+  organizationId String
+  key            String
+  version        Int
+  name           String
+  description    String?
+  /// The definition document, validated by src/lib/workflow/schema.ts.
+  definition     Json
+  active         Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  createdBy      String?
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  instances    WorkflowInstance[]
+
+  @@unique([organizationId, key, version])
+  @@index([organizationId, key, active])
+}
+
+enum InstanceStatus {
+  RUNNING
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+model WorkflowInstance {
+  id           String         @id @default(cuid())
+  definitionId String
+  personId     String
+  status       InstanceStatus @default(RUNNING)
+  /// Index of the stage currently being executed within the pinned definition.
+  currentStage String?
+  /// Snapshot of the person at trigger time, used to evaluate stage conditions
+  /// deterministically for the life of the instance.
+  context      Json
+  startedAt    DateTime       @default(now())
+  completedAt  DateTime?
+
+  definition WorkflowDefinition @relation(fields: [definitionId], references: [id])
+  person     Person             @relation(fields: [personId], references: [id], onDelete: Cascade)
+  tasks      WorkflowTask[]
+
+  @@index([personId, status])
+  @@index([status])
+}
+
+enum TaskStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+  SKIPPED
+  ESCALATED
+  CANCELLED
+}
+
+enum TaskKind {
+  APPROVAL
+  DOCUMENT
+  TASK
+}
+
+model WorkflowTask {
+  id         String     @id @default(cuid())
+  instanceId String
+  stageId    String
+  kind       TaskKind
+  title      String
+  status     TaskStatus @default(PENDING)
+  assigneeId String?
+  dueAt      DateTime?
+  decidedAt  DateTime?
+  decidedBy  String?
+  comment    String?
+  /// Stage-specific payload, e.g. required document types.
+  payload    Json?
+  createdAt  DateTime   @default(now())
+
+  instance WorkflowInstance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  assignee User?            @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  @@index([assigneeId, status])
+  @@index([instanceId])
+  @@index([status, dueAt])
+}
+
+// ---------------------------------------------------------------------------
+// Attachments
+// ---------------------------------------------------------------------------
+
+enum ScanStatus {
+  PENDING
+  CLEAN
+  INFECTED
+  FAILED
+}
+
+model Attachment {
+  id           String     @id @default(cuid())
+  personId     String
+  /// Logical document type, e.g. "NDA", "ID_PROOF".
+  documentType String
+  filename     String
+  contentType  String
+  sizeBytes    Int
+  /// Object storage key. The file itself never touches Postgres.
+  storageKey   String     @unique
+  scanStatus   ScanStatus @default(PENDING)
+  uploadedBy   String?
+  createdAt    DateTime   @default(now())
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@index([personId, documentType])
+}
+
+// ---------------------------------------------------------------------------
+// API clients
+// ---------------------------------------------------------------------------
+
+model ApiClient {
+  id             String    @id @default(cuid())
+  organizationId String
+  name           String
+  /// SHA-256 of the bearer token. The plaintext is shown once, at creation.
+  tokenHash      String    @unique
+  /// Token prefix, stored so the UI can identify a token without revealing it.
+  tokenPrefix    String
+  /// Granted scopes, e.g. ["scim:read", "scim:write", "api:workflows"].
+  scopes         String[]
+  active         Boolean   @default(true)
+  lastUsedAt     DateTime?
+  expiresAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, active])
+}
+
+// ---------------------------------------------------------------------------
+// Audit
+// ---------------------------------------------------------------------------
+
+enum ActorKind {
+  USER
+  API_CLIENT
+  SYSTEM
+}
+
+/// Append-only. There is no code path that updates or deletes these rows, and
+/// the migration revokes UPDATE/DELETE on the table from the application role.
+model AuditEvent {
+  id             String    @id @default(cuid())
+  organizationId String
+  /// Dotted action name, e.g. "person.created", "workflow.task.approved".
+  action         String
+  actorKind      ActorKind @default(USER)
+  actorId        String?
+  actorLabel     String?
+  /// Entity this event is about, e.g. "Person".
+  subjectType    String
+  subjectId      String?
+  /// Field-level before/after, already masked for sensitive attributes.
+  changes        Json?
+  metadata       Json?
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@index([subjectType, subjectId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([action])
+}

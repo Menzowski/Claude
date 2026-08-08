@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    paths: ['nerm/**', '.github/workflows/ci.yml']
+  pull_request:
+    paths: ['nerm/**', '.github/workflows/ci.yml']
+
+defaults:
+  run:
+    working-directory: nerm
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nerm
+          POSTGRES_PASSWORD: nerm
+          POSTGRES_DB: nerm
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U nerm"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://nerm:nerm@localhost:5432/nerm?schema=public
+      AUTH_SECRET: ci-secret-value-at-least-16-chars
+      AUTH_URL: http://localhost:3000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: nerm/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm prisma generate
+
+      # Integration tests exercise the real schema, including the database-level
+      # constraints and the append-only audit trigger — those cannot be verified
+      # against a mock.
+      - run: pnpm prisma migrate deploy
+      - run: pnpm db:seed
+
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
